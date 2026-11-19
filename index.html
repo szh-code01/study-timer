@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>极简计时器</title>
+<style>
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Microsoft YaHei", sans-serif;
+    background: #f5f5f7;
+    color: #1d1d1f;
+    display: flex;
+    justify-content: center;
+    padding: 40px 16px;
+  }
+  .card {
+    width: 100%;
+    max-width: 480px;
+    background: #fff;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, .08);
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #6e6e73; font-size: 13px; margin-bottom: 20px; }
+  label { display: block; font-size: 13px; color: #6e6e73; margin: 14px 0 6px; }
+  input {
+    width: 100%; box-sizing: border-box;
+    padding: 12px 14px; font-size: 16px;
+    border: 1px solid #d2d2d7; border-radius: 10px;
+  }
+  button {
+    width: 100%; margin-top: 16px;
+    padding: 14px; font-size: 16px; font-weight: 600;
+    border: 0; border-radius: 12px; cursor: pointer;
+    background: #0071e3; color: #fff;
+  }
+  button.secondary { background: #e8e8ed; color: #1d1d1f; }
+  #list { margin-top: 24px; }
+  .item {
+    display: flex; justify-content: space-between;
+    padding: 12px 0; border-top: 1px solid #ececf0;
+    font-size: 14px;
+  }
+  .item .muted { color: #6e6e73; }
+  .status {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid #ececf0;
+    font-size: 12px;
+    color: #6e6e73;
+    line-height: 1.7;
+    word-break: break-all;
+  }
+  #overlay {
+    position: fixed; inset: 0;
+    background: #0b0b0f; color: #fff;
+    display: none; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px; padding: 24px; text-align: center;
+  }
+  #overlay.show { display: flex; }
+  #countdown { font-size: 64px; font-variant-numeric: tabular-nums; }
+  #overlay .tip { color: #9a9aa2; font-size: 14px; max-width: 300px; }
+  #overlay button { max-width: 240px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>极简计时器 <span style="font-size:12px;color:#9a9aa2;font-weight:400">v4</span></h1>
+  <div class="sub">点开始 → 全屏计时 → 点结束 → 记一条。锁机功能还没做。</div>
+
+  <label for="subject">这回想学什么</label>
+  <input id="subject" value="线性代数" autocomplete="off">
+
+  <label for="minutes">打算学多久（分钟）</label>
+  <input id="minutes" type="number" min="1" value="50">
+
+  <button id="startBtn">开始</button>
+
+  <div id="list">
+    <div class="sub" id="empty">还没有记录。</div>
+  </div>
+
+  <div id="status" class="status">状态检查中…</div>
+</div>
+
+<div id="overlay">
+  <div class="tip" id="overlaySubject">线性代数</div>
+  <div id="countdown">50:00</div>
+  <div class="tip">这一页盖住了屏幕，但别的应用还能点开——这就是还没做的部分。</div>
+  <button id="stopBtn" class="secondary">结束</button>
+</div>
+
+<script>
+  var subjectInput = document.getElementById('subject');
+  var minutesInput = document.getElementById('minutes');
+  var startBtn = document.getElementById('startBtn');
+  var stopBtn = document.getElementById('stopBtn');
+  var overlay = document.getElementById('overlay');
+  var countdown = document.getElementById('countdown');
+  var overlaySubject = document.getElementById('overlaySubject');
+  var list = document.getElementById('list');
+  var empty = document.getElementById('empty');
+  var statusEl = document.getElementById('status');
+
+  var timer = null;
+  var secondsLeft = 0;
+  var startedAt = null;
+  var currentSubject = '';
+  var memoryRecords = [];
+  var KEY = 'minimal-timer-records';
+  var SUBJECT_KEY = 'minimal-timer-subject';
+
+  function storageOk() {
+    try {
+      localStorage.setItem('__probe__', '1');
+      var ok = localStorage.getItem('__probe__') === '1';
+      localStorage.removeItem('__probe__');
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  var storeOk = storageOk();
+
+  function loadRecords() {
+    if (!storeOk) return memoryRecords;
+    try {
+      return JSON.parse(localStorage.getItem(KEY) || '[]');
+    } catch (e) {
+      return memoryRecords;
+    }
+  }
+
+  function saveRecords(records) {
+    memoryRecords = records;
+    if (!storeOk) return;
+    try {
+      localStorage.setItem(KEY, JSON.stringify(records));
+    } catch (e) {}
+  }
+
+  function format(sec) {
+    var m = String(Math.floor(sec / 60)).padStart(2, '0');
+    var s = String(sec % 60).padStart(2, '0');
+    return m + ':' + s;
+  }
+
+  function renderRecords() {
+    var records = loadRecords();
+    var old = list.querySelectorAll('.item');
+    for (var i = 0; i < old.length; i++) old[i].remove();
+    empty.style.display = records.length ? 'none' : 'block';
+    for (var j = records.length - 1; j >= 0; j--) {
+      var r = records[j];
+      var div = document.createElement('div');
+      div.className = 'item';
+      var left = document.createElement('span');
+      left.textContent = r.date + '　' + r.subject;
+      var right = document.createElement('span');
+      right.className = 'muted';
+      right.textContent = r.minutes + ' 分钟';
+      div.appendChild(left);
+      div.appendChild(right);
+      list.appendChild(div);
+    }
+  }
+
+  function updateStatus() {
+    var records = loadRecords();
+    var text = 'v4 ｜ 存储：' + (storeOk ? '可用' : '不可用（记录只在页面开着时存在）') +
+      ' ｜ 记住的科目：' + (subjectInput.value || '（空）') +
+      ' ｜ 本页记录：' + records.length + ' 条';
+    statusEl.textContent = text;
+  }
+
+  function start() {
+    var subject = subjectInput.value.trim() || '未命名';
+    var minutes = Math.max(1, Number(minutesInput.value) || 50);
+    currentSubject = subject;
+    if (storeOk) {
+      try { localStorage.setItem(SUBJECT_KEY, subject); } catch (e) {}
+    }
+    secondsLeft = minutes * 60;
+    startedAt = new Date();
+    overlaySubject.textContent = subject;
+    countdown.textContent = format(secondsLeft);
+    overlay.classList.add('show');
+    updateStatus();
+    clearInterval(timer);
+    timer = setInterval(function () {
+      secondsLeft -= 1;
+      countdown.textContent = format(Math.max(0, secondsLeft));
+      if (secondsLeft <= 0) finish();
+    }, 1000);
+  }
+
+  function finish() {
+    clearInterval(timer);
+    timer = null;
+    overlay.classList.remove('show');
+
+    var end = new Date();
+    var elapsedSec = Math.max(1, Math.round((end - startedAt) / 1000));
+    var minutes = Math.max(1, Math.round(elapsedSec / 60));
+    var date = end.getFullYear() + '-' +
+      String(end.getMonth() + 1).padStart(2, '0') + '-' +
+      String(end.getDate()).padStart(2, '0');
+
+    var records = loadRecords();
+    records.push({ date: date, subject: currentSubject, minutes: minutes });
+    saveRecords(records);
+    renderRecords();
+    updateStatus();
+  }
+
+  // 打开页面时：能存就用上次的科目，不能存就取本页最后一条记录的科目
+  try {
+    var savedSubject = null;
+    if (storeOk) savedSubject = localStorage.getItem(SUBJECT_KEY);
+    if (!savedSubject && memoryRecords.length) {
+      savedSubject = memoryRecords[memoryRecords.length - 1].subject;
+    }
+    if (savedSubject) subjectInput.value = savedSubject;
+  } catch (e) {}
+
+  startBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', finish);
+  renderRecords();
+  updateStatus();
+</script>
+</body>
+</html>
