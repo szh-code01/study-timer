@@ -38,12 +38,25 @@
   }
   button.secondary { background: #e8e8ed; color: #1d1d1f; }
   #list { margin-top: 24px; }
-  .item {
-    display: flex; justify-content: space-between;
-    padding: 12px 0; border-top: 1px solid #ececf0;
-    font-size: 14px;
+  .day-group { margin-top: 18px; }
+  .day-heading {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 0 0 9px; border-bottom: 1px solid #ececf0;
   }
-  .item .muted { color: #6e6e73; }
+  .day-date { font-size: 15px; font-weight: 650; }
+  .day-total { color: #6e6e73; font-size: 12px; }
+  .item {
+    position: relative; margin-left: 7px; padding: 12px 0 12px 18px;
+    border-left: 2px solid #dbeafe; font-size: 14px;
+  }
+  .item::before {
+    content: ""; position: absolute; left: -6px; top: 17px;
+    width: 10px; height: 10px; border-radius: 50%; background: #0071e3;
+  }
+  .item-top { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .item-subject { font-weight: 600; overflow-wrap: anywhere; }
+  .item-duration { color: #6e6e73; white-space: nowrap; font-size: 13px; }
+  .item-time { color: #6e6e73; font-size: 12px; margin-top: 3px; }
   .status {
     margin-top: 18px;
     padding-top: 14px;
@@ -68,7 +81,7 @@
 </head>
 <body>
 <div class="card">
-  <h1>极简计时器 <span style="font-size:12px;color:#9a9aa2;font-weight:400">v4</span></h1>
+  <h1>极简计时器 <span style="font-size:12px;color:#9a9aa2;font-weight:400">v7</span></h1>
   <div class="sub">点开始 → 全屏计时 → 点结束 → 记一条。锁机功能还没做。</div>
 
   <label for="subject">这回想学什么</label>
@@ -108,10 +121,12 @@
   var timer = null;
   var secondsLeft = 0;
   var startedAt = null;
+  var endsAt = null;
   var currentSubject = '';
   var memoryRecords = [];
   var KEY = 'minimal-timer-records';
   var SUBJECT_KEY = 'minimal-timer-subject';
+  var SESSION_KEY = 'minimal-timer-active-session';
 
   function storageOk() {
     try {
@@ -143,6 +158,22 @@
     } catch (e) {}
   }
 
+  function saveActiveSession() {
+    if (!storeOk || !startedAt || !endsAt) return;
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        subject: currentSubject,
+        startedAt: startedAt.toISOString(),
+        endsAt: endsAt
+      }));
+    } catch (e) {}
+  }
+
+  function clearActiveSession() {
+    if (!storeOk) return;
+    try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+  }
+
   function format(sec) {
     var m = String(Math.floor(sec / 60)).padStart(2, '0');
     var s = String(sec % 60).padStart(2, '0');
@@ -151,27 +182,67 @@
 
   function renderRecords() {
     var records = loadRecords();
-    var old = list.querySelectorAll('.item');
+    var old = list.querySelectorAll('.day-group');
     for (var i = 0; i < old.length; i++) old[i].remove();
     empty.style.display = records.length ? 'none' : 'block';
-    for (var j = records.length - 1; j >= 0; j--) {
-      var r = records[j];
-      var div = document.createElement('div');
-      div.className = 'item';
-      var left = document.createElement('span');
-      left.textContent = r.date + '　' + r.subject;
-      var right = document.createElement('span');
-      right.className = 'muted';
-      right.textContent = r.minutes + ' 分钟';
-      div.appendChild(left);
-      div.appendChild(right);
-      list.appendChild(div);
+    var groups = {};
+    for (var j = 0; j < records.length; j++) {
+      var record = records[j];
+      var day = record.date || (record.end ? record.end.slice(0, 10) : '日期未知');
+      if (!groups[day]) groups[day] = [];
+      groups[day].push(record);
+    }
+    var dates = Object.keys(groups).sort().reverse();
+    for (var d = 0; d < dates.length; d++) {
+      var date = dates[d];
+      var dayRecords = groups[date].slice().sort(function (a, b) {
+        return new Date(b.start || b.end || 0) - new Date(a.start || a.end || 0);
+      });
+      var total = dayRecords.reduce(function (sum, r) { return sum + (Number(r.minutes) || 0); }, 0);
+      var group = document.createElement('section');
+      group.className = 'day-group';
+      var heading = document.createElement('div');
+      heading.className = 'day-heading';
+      var dateLabel = document.createElement('span');
+      dateLabel.className = 'day-date';
+      dateLabel.textContent = date;
+      var totalLabel = document.createElement('span');
+      totalLabel.className = 'day-total';
+      totalLabel.textContent = '共 ' + total + ' 分钟';
+      heading.appendChild(dateLabel);
+      heading.appendChild(totalLabel);
+      group.appendChild(heading);
+
+      for (var k = 0; k < dayRecords.length; k++) {
+        var r = dayRecords[k];
+        var item = document.createElement('article');
+        item.className = 'item';
+        var top = document.createElement('div');
+        top.className = 'item-top';
+        var subject = document.createElement('span');
+        subject.className = 'item-subject';
+        subject.textContent = r.subject || '未命名';
+        var duration = document.createElement('span');
+        duration.className = 'item-duration';
+        duration.textContent = (Number(r.minutes) || 0) + ' 分钟';
+        top.appendChild(subject);
+        top.appendChild(duration);
+        item.appendChild(top);
+        if (r.startTime || r.endTime) {
+          var time = document.createElement('div');
+          time.className = 'item-time';
+          time.textContent = (r.startTime || '时间未知') + ' – ' + (r.endTime || '时间未知');
+          item.appendChild(time);
+        }
+        group.appendChild(item);
+      }
+      list.appendChild(group);
     }
   }
 
   function updateStatus() {
     var records = loadRecords();
-    var text = 'v4 ｜ 存储：' + (storeOk ? '可用' : '不可用（记录只在页面开着时存在）') +
+    var text = 'v7 ｜ 存储：' + (storeOk ? '可用' : '不可用（关闭页面后无法恢复计时）') +
       ' ｜ 记住的科目：' + (subjectInput.value || '（空）') +
       ' ｜ 本页记录：' + records.length + ' 条';
     statusEl.textContent = text;
@@ -184,37 +255,86 @@
     if (storeOk) {
       try { localStorage.setItem(SUBJECT_KEY, subject); } catch (e) {}
     }
-    secondsLeft = minutes * 60;
     startedAt = new Date();
+    endsAt = startedAt.getTime() + minutes * 60 * 1000;
+    saveActiveSession();
+    secondsLeft = Math.ceil((endsAt - Date.now()) / 1000);
     overlaySubject.textContent = subject;
     countdown.textContent = format(secondsLeft);
     overlay.classList.add('show');
     updateStatus();
     clearInterval(timer);
     timer = setInterval(function () {
-      secondsLeft -= 1;
+      secondsLeft = Math.ceil((endsAt - Date.now()) / 1000);
       countdown.textContent = format(Math.max(0, secondsLeft));
       if (secondsLeft <= 0) finish();
     }, 1000);
   }
 
   function finish() {
+    if (!startedAt) return;
     clearInterval(timer);
     timer = null;
     overlay.classList.remove('show');
+    clearActiveSession();
 
     var end = new Date();
-    var elapsedSec = Math.max(1, Math.round((end - startedAt) / 1000));
+    var elapsedSec = Math.max(0, Math.round((end - startedAt) / 1000));
     var minutes = Math.max(1, Math.round(elapsedSec / 60));
     var date = end.getFullYear() + '-' +
       String(end.getMonth() + 1).padStart(2, '0') + '-' +
       String(end.getDate()).padStart(2, '0');
 
     var records = loadRecords();
-    records.push({ date: date, subject: currentSubject, minutes: minutes });
+    records.push({
+      date: date,
+      subject: currentSubject,
+      minutes: minutes,
+      start: startedAt.toISOString(),
+      end: end.toISOString(),
+      startTime: String(startedAt.getHours()).padStart(2, '0') + ':' + String(startedAt.getMinutes()).padStart(2, '0'),
+      endTime: String(end.getHours()).padStart(2, '0') + ':' + String(end.getMinutes()).padStart(2, '0')
+    });
+    startedAt = null;
+    endsAt = null;
     saveRecords(records);
     renderRecords();
     updateStatus();
+  }
+
+  function restoreActiveSession() {
+    if (!storeOk) return;
+    try {
+      var saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+      if (!saved || !saved.startedAt || !saved.endsAt || !saved.subject) return;
+      var restoredStart = new Date(saved.startedAt);
+      var restoredEnd = Number(saved.endsAt);
+      if (isNaN(restoredStart.getTime()) || !isFinite(restoredEnd)) {
+        clearActiveSession();
+        return;
+      }
+      if (Date.now() >= restoredEnd) {
+        // 到时后不自动补记，避免页面关闭期间误生成一条完成记录。
+        clearActiveSession();
+        return;
+      }
+      startedAt = restoredStart;
+      endsAt = restoredEnd;
+      currentSubject = saved.subject;
+      subjectInput.value = saved.subject;
+      overlaySubject.textContent = currentSubject;
+      secondsLeft = Math.ceil((endsAt - Date.now()) / 1000);
+      countdown.textContent = format(secondsLeft);
+      overlay.classList.add('show');
+      clearInterval(timer);
+      timer = setInterval(function () {
+        secondsLeft = Math.ceil((endsAt - Date.now()) / 1000);
+        countdown.textContent = format(Math.max(0, secondsLeft));
+        if (secondsLeft <= 0) finish();
+      }, 1000);
+    } catch (e) {
+      clearActiveSession();
+    }
   }
 
   // 打开页面时：能存就用上次的科目，不能存就取本页最后一条记录的科目
@@ -230,6 +350,7 @@
   startBtn.addEventListener('click', start);
   stopBtn.addEventListener('click', finish);
   renderRecords();
+  restoreActiveSession();
   updateStatus();
 </script>
 </body>
